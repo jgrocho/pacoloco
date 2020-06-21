@@ -4,6 +4,8 @@ Description=Pacoloco caching proxy server
 [Service]
 User=pacoloco
 ExecStart=/usr/bin/pacoloco
+ExecReload=/bin/kill -HUP $MAINPID
+PIDFile=/run/pacoloco.pid
 KillMode=process
 
 [Install]

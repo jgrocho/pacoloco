@@ -1,20 +1,27 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"github.com/cloudflare/tableflip"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
-var configFile = flag.String("config", "/etc/pacoloco.yaml", "Path to config file")
+var (
+	configFile = flag.String("config", "/etc/pacoloco.yaml", "Path to config file")
+	pidFile    = flag.String("pid-file", "/run/pacoloco.pid", "Path to pid file")
+)
 var pathRegex *regexp.Regexp
 
 func init() {
@@ -29,6 +36,27 @@ func main() {
 	flag.Parse()
 	log.SetFlags(log.Lshortfile)
 
+	// Setup tableflip for graceful server reloads
+	upg, err := tableflip.New(tableflip.Options{
+		PIDFile: *pidFile,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer upg.Stop()
+
+	// Handle reloading on SIGHUP
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGHUP)
+		for range sig {
+			err := upg.Upgrade()
+			if err != nil {
+				log.Println("Failed to reload:", err)
+			}
+		}
+	}()
+
 	log.Print("Reading config file from ", *configFile)
 	config = readConfig(*configFile)
 
@@ -36,11 +64,37 @@ func main() {
 	defer cleanupTicker.Stop()
 
 	listenAddr := fmt.Sprintf(":%d", config.Port)
-	log.Println("Starting server at port", config.Port)
+	listener, err := upg.Listen("tcp", listenAddr)
+	if err != nil {
+		log.Fatalln("Can't listen:", err)
+	}
+
 	// The request path looks like '/repo/$reponame/$pathatmirror'
 	http.HandleFunc("/repo/", pacolocoHandler)
 	// http.HandleFunc("/stats", statsHandler) TODO: implement stats
-	log.Fatal(http.ListenAndServe(listenAddr, nil))
+
+	server := http.Server{}
+	go func() {
+		err := server.Serve(listener)
+		if err != http.ErrServerClosed {
+			log.Println("HTTP server:", err)
+		}
+	}()
+
+	// Inform tableflip that we are ready
+	log.Printf("ready")
+	if err := upg.Ready(); err != nil {
+		panic(err)
+	}
+	<-upg.Exit()
+
+	// We have to set a deadline on exiting this process so that the new one can take over
+	time.AfterFunc(30*time.Second, func() {
+		log.Fatalln("Graceful shutdown timed out")
+	})
+
+	// Wait for connections to drain
+	server.Shutdown(context.Background())
 }
 
 func pacolocoHandler(w http.ResponseWriter, req *http.Request) {
