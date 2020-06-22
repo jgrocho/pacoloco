@@ -36,6 +36,23 @@ func main() {
 	flag.Parse()
 	log.SetFlags(log.Lshortfile)
 
+	server := &http.Server{}
+
+	// Shutdown gracefully on signals
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		for range sig {
+			shutdown(server)
+		}
+	}()
+
+	run(server)
+
+	shutdown(server)
+}
+
+func run(server *http.Server) {
 	// Setup tableflip for graceful server reloads
 	upg, err := tableflip.New(tableflip.Options{
 		PIDFile: *pidFile,
@@ -73,7 +90,6 @@ func main() {
 	http.HandleFunc("/repo/", pacolocoHandler)
 	// http.HandleFunc("/stats", statsHandler) TODO: implement stats
 
-	server := http.Server{}
 	go func() {
 		err := server.Serve(listener)
 		if err != http.ErrServerClosed {
@@ -82,19 +98,24 @@ func main() {
 	}()
 
 	// Inform tableflip that we are ready
-	log.Printf("ready")
+	log.Printf("Ready to receive connections")
 	if err := upg.Ready(); err != nil {
 		panic(err)
 	}
 	<-upg.Exit()
+}
 
+func shutdown(server *http.Server) {
 	// We have to set a deadline on exiting this process so that the new one can take over
 	time.AfterFunc(30*time.Second, func() {
 		log.Fatalln("Graceful shutdown timed out")
 	})
 
 	// Wait for connections to drain
+	log.Printf("Waiting for connections to drain")
 	server.Shutdown(context.Background())
+	log.Printf("Done")
+	os.Exit(0)
 }
 
 func pacolocoHandler(w http.ResponseWriter, req *http.Request) {
