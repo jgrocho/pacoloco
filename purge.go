@@ -1,9 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"github.com/knqyf263/go-rpm-version"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -11,11 +15,15 @@ import (
 func setupPurgeStaleFilesRoutine() *time.Ticker {
 	ticker := time.NewTicker(time.Duration(24) * time.Hour) // purge files once a day
 	go func() {
-		purgeStaleFiles(config.CacheDir, config.PurgeFilesAfter)
+		if config.PurgeStrategy == PurgeStrategyTime {
+			purgeStaleFiles(config.CacheDir, config.PurgeFilesAfter)
+		}
 		for {
 			select {
 			case <-ticker.C:
-				purgeStaleFiles(config.CacheDir, config.PurgeFilesAfter)
+				if config.PurgeStrategy == PurgeStrategyTime {
+					purgeStaleFiles(config.CacheDir, config.PurgeFilesAfter)
+				}
 			}
 		}
 	}()
@@ -52,5 +60,67 @@ func purgeStaleFiles(cacheDir string, purgeFilesAfter int) {
 	}
 	if err := filepath.Walk(pkgDir, walkfn); err != nil {
 		log.Println(err)
+	}
+}
+
+func purgeOldFiles(file string, keepAtMost int) {
+	pkg := parsePackage(file)
+
+	// find all files that might be the same package
+	glob := filepath.Join(pkg.Directory, fmt.Sprintf("%s-*.pkg.tar*", pkg.Name))
+	matches, err := filepath.Glob(glob)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
+	// filter by those that are the same package
+	canidates := make([]Package, 0, len(matches))
+	for _, match := range matches {
+		if canidate := parsePackage(match); canidate.Name == pkg.Name {
+			canidates = append(canidates, canidate)
+		}
+	}
+
+	// skip sorting if we don't have to remove any files
+	if len(canidates) < keepAtMost {
+		return
+	}
+
+	// remove the oldest (by version) packages
+	sort.Slice(canidates, func(i, j int) bool {
+		return canidates[i].Version.LessThan(canidates[j].Version)
+	})
+	for i := 0; i < len(canidates)-keepAtMost; i++ {
+		canidate := canidates[i]
+		log.Printf("Remove old file %v as there are more than %d version(s) of this package", canidate.FullPath, keepAtMost)
+		if err := os.Remove(canidate.FullPath); err != nil {
+			log.Print(err)
+		}
+	}
+}
+
+type Package struct {
+	FullPath  string
+	Directory string
+	Name      string
+	Version   version.Version
+	Arch      string
+	Extension string
+}
+
+func parsePackage(file string) Package {
+	dir, base := filepath.Split(file)
+	parts := strings.Split(base, "-")
+	count := len(parts)
+	last := strings.SplitN(parts[count-1], ".", 2)
+
+	return Package{
+		FullPath:  file,
+		Directory: dir,
+		Name:      strings.Join(parts[0:count-3], "-"),
+		Version:   version.NewVersion(strings.Join(parts[count-3:count-1], "-")),
+		Arch:      last[0],
+		Extension: last[1],
 	}
 }

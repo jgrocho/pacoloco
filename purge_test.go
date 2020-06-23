@@ -1,15 +1,17 @@
 package main
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"path"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
-func TestPurge(t *testing.T) {
+func TestTimePurge(t *testing.T) {
 	purgeFilesAfter := 3600 * 24 * 30 // purge files if they are not accessed for 30 days
 
 	testPacolocoDir, err := ioutil.TempDir(os.TempDir(), "*-pacoloco-repo")
@@ -55,4 +57,69 @@ func TestPurge(t *testing.T) {
 	if err != nil {
 		t.Fail()
 	}
+}
+
+func TestCountPurge(t *testing.T) {
+	purgeKeepAtMost := 3
+
+	testPacolocoDir, err := ioutil.TempDir(os.TempDir(), "*-pacoloco-repo")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(testPacolocoDir)
+
+	testRepo := path.Join(testPacolocoDir, "pkg", "purgerepo")
+	err = os.MkdirAll(testRepo, os.ModePerm)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var pkgWithTooManyVersions [4]string
+	for i := 0; i < len(pkgWithTooManyVersions); i++ {
+		pkgWithTooManyVersions[i] = path.Join(testRepo, fmt.Sprintf("toomany-1-%d-any.pkg.tar", i+1))
+		os.Create(pkgWithTooManyVersions[i])
+	}
+
+	var pkgWithJustEnoughVersions [3]string
+	for i := 0; i < len(pkgWithJustEnoughVersions); i++ {
+		pkgWithJustEnoughVersions[i] = path.Join(testRepo, fmt.Sprintf("justenough-1-%d-any.pkg.tar", i+1))
+		os.Create(pkgWithJustEnoughVersions[i])
+	}
+
+	var pkgWithTooFewVersions [2]string
+	for i := 0; i < len(pkgWithTooFewVersions); i++ {
+		pkgWithTooFewVersions[i] = path.Join(testRepo, fmt.Sprintf("toofew-1-%d-any.pkg.tar", i+1))
+		os.Create(pkgWithTooFewVersions[i])
+	}
+
+	purgeOldFiles(pkgWithTooManyVersions[0], purgeKeepAtMost)
+	purgeOldFiles(pkgWithJustEnoughVersions[0], purgeKeepAtMost)
+	purgeOldFiles(pkgWithTooFewVersions[0], purgeKeepAtMost)
+
+	var matches []string
+
+	matches, err = filepath.Glob(filepath.Join(testRepo, "toomany-*.pkg.tar"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if len(matches) != 3 {
+		t.Fail()
+	}
+
+	matches, err = filepath.Glob(filepath.Join(testRepo, "justenough-*.pkg.tar"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if len(matches) != 3 {
+		t.Fail()
+	}
+
+	matches, err = filepath.Glob(filepath.Join(testRepo, "toofew-*.pkg.tar"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if len(matches) != 2 {
+		t.Fail()
+	}
+
 }

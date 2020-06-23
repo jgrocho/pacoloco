@@ -217,6 +217,11 @@ func handleRequest(w http.ResponseWriter, req *http.Request) error {
 			}
 		}
 	}
+	if served {
+		if config.PurgeStrategy == PurgeStrategyCount {
+			go purgeOldFiles(filePath, config.PurgeKeepAtMost)
+		}
+	}
 	if !served {
 		err = sendCachedFile(w, req, fileName, filePath)
 	}
