@@ -59,17 +59,9 @@ func TestTimePurge(t *testing.T) {
 	}
 }
 
-func TestCountPurge(t *testing.T) {
-	purgeKeepAtMost := 3
-
-	testPacolocoDir, err := ioutil.TempDir(os.TempDir(), "*-pacoloco-repo")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer os.RemoveAll(testPacolocoDir)
-
-	testRepo := path.Join(testPacolocoDir, "pkg", "purgerepo")
-	err = os.MkdirAll(testRepo, os.ModePerm)
+func setupPurgeCountRepo(tempdir string) (string, [4]string, [3]string, [2]string) {
+	testRepo := path.Join(tempdir, "pkgs", "purgerepo")
+	err := os.MkdirAll(testRepo, os.ModePerm)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -91,6 +83,20 @@ func TestCountPurge(t *testing.T) {
 		pkgWithTooFewVersions[i] = path.Join(testRepo, fmt.Sprintf("toofew-1-%d-any.pkg.tar", i+1))
 		os.Create(pkgWithTooFewVersions[i])
 	}
+
+	return testRepo, pkgWithTooManyVersions, pkgWithJustEnoughVersions, pkgWithTooFewVersions
+}
+
+func TestCountPurge(t *testing.T) {
+	purgeKeepAtMost := 3
+
+	testPacolocoDir, err := ioutil.TempDir(os.TempDir(), "*-pacoloco-repo")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(testPacolocoDir)
+
+	testRepo, pkgWithTooManyVersions, pkgWithJustEnoughVersions, pkgWithTooFewVersions := setupPurgeCountRepo(testPacolocoDir)
 
 	purgeOldFiles(pkgWithTooManyVersions[0], purgeKeepAtMost)
 	purgeOldFiles(pkgWithJustEnoughVersions[0], purgeKeepAtMost)
@@ -122,4 +128,22 @@ func TestCountPurge(t *testing.T) {
 		t.Fail()
 	}
 
+}
+
+func TestAllCountPurge(t *testing.T) {
+	log.SetOutput(os.Stderr)
+
+	testPacolocoDir, err := ioutil.TempDir(os.TempDir(), "*-pacoloco-repo")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(testPacolocoDir)
+
+	setupPurgeCountRepo(testPacolocoDir)
+
+	purgeAllOldPackages(&Config{
+		CacheDir:        testPacolocoDir,
+		PurgeStrategy:   PurgeStrategyCount,
+		PurgeKeepAtMost: 3,
+	})
 }

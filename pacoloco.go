@@ -77,8 +77,13 @@ func run(server *http.Server) {
 	log.Print("Reading config file from ", *configFile)
 	config = readConfig(*configFile)
 
-	cleanupTicker := setupPurgeStaleFilesRoutine()
-	defer cleanupTicker.Stop()
+	switch config.PurgeStrategy {
+	case PurgeStrategyTime:
+		cleanupTicker := setupPurgeStaleFilesRoutine()
+		defer cleanupTicker.Stop()
+	case PurgeStrategyCount:
+		purgeAllOldPackages(config)
+	}
 
 	listenAddr := fmt.Sprintf(":%d", config.Port)
 	listener, err := upg.Listen("tcp", listenAddr)

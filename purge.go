@@ -15,15 +15,11 @@ import (
 func setupPurgeStaleFilesRoutine() *time.Ticker {
 	ticker := time.NewTicker(time.Duration(24) * time.Hour) // purge files once a day
 	go func() {
-		if config.PurgeStrategy == PurgeStrategyTime {
-			purgeStaleFiles(config.CacheDir, config.PurgeFilesAfter)
-		}
+		purgeStaleFiles(config.CacheDir, config.PurgeFilesAfter)
 		for {
 			select {
 			case <-ticker.C:
-				if config.PurgeStrategy == PurgeStrategyTime {
-					purgeStaleFiles(config.CacheDir, config.PurgeFilesAfter)
-				}
+				purgeStaleFiles(config.CacheDir, config.PurgeFilesAfter)
 			}
 		}
 	}()
@@ -63,11 +59,62 @@ func purgeStaleFiles(cacheDir string, purgeFilesAfter int) {
 	}
 }
 
+const PkgGlob = "*.pkg.tar*"
+
+func purgeAllOldPackages(config *Config) {
+	for repo := range config.Repos {
+		// find all files that are packages
+		glob := filepath.Join(config.CacheDir, "pkgs", repo, PkgGlob)
+		matches, err := filepath.Glob(glob)
+		if err != nil {
+			log.Print(err)
+			continue
+		}
+
+		// turn filepaths into Packages
+		packages := make([]Package, len(matches))
+		for i, match := range matches {
+			packages[i] = parsePackage(match)
+		}
+
+		// sort by name and then by version
+		sort.Slice(packages, func(i, j int) bool {
+			if packages[i].Name == packages[j].Name {
+				return packages[i].Version.LessThan(packages[j].Version)
+			}
+			return packages[i].Name < packages[j].Name
+		})
+
+		for i := 0; i < len(packages); {
+			pkg := packages[i]
+
+			// create a list of packages that have the same name
+			canidates := make([]Package, 0, config.PurgeKeepAtMost+2)
+			for ; i < len(packages); i++ {
+				canidate := packages[i]
+				if canidate.Name != pkg.Name {
+					break
+				}
+				canidates = append(canidates, canidate)
+			}
+
+			// remove the oldest (by version) packages
+			for j := 0; j < len(canidates)-config.PurgeKeepAtMost; j++ {
+				canidate := canidates[j]
+				log.Printf("Remove old file %v as there are more than %d version(s) of this package", canidate.FullPath, config.PurgeKeepAtMost)
+				if err := os.Remove(canidate.FullPath); err != nil {
+					log.Print(err)
+				}
+			}
+		}
+	}
+}
+
 func purgeOldFiles(file string, keepAtMost int) {
 	pkg := parsePackage(file)
 
 	// find all files that might be the same package
-	glob := filepath.Join(pkg.Directory, fmt.Sprintf("%s-*.pkg.tar*", pkg.Name))
+	glob := filepath.Join(pkg.Directory, fmt.Sprintf("%s-%s", pkg.Name, PkgGlob))
 	matches, err := filepath.Glob(glob)
 	if err != nil {
 		log.Print(err)
