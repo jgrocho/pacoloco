@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"github.com/knqyf263/go-rpm-version"
 	"log"
@@ -71,6 +72,8 @@ func purgeAllOldPackages(config *Config) {
 			continue
 		}
 
+		matches = filterOutSigs(matches)
+
 		// turn filepaths into Packages
 		packages := make([]Package, len(matches))
 		for i, match := range matches {
@@ -105,6 +108,12 @@ func purgeAllOldPackages(config *Config) {
 				if err := os.Remove(canidate.FullPath); err != nil {
 					log.Print(err)
 				}
+				// remove a matching '.sig' file (if it exists)
+				if err := os.Remove(canidate.FullPath + ".sig"); err != nil {
+					if !errors.Is(err, os.ErrNotExist) {
+						log.Print(err)
+					}
+				}
 			}
 		}
 	}
@@ -120,6 +129,9 @@ func purgeOldFiles(file string, keepAtMost int) {
 		log.Print(err)
 		return
 	}
+
+	// filter out *.sig files
+	matches = filterOutSigs(matches)
 
 	// filter by those that are the same package
 	canidates := make([]Package, 0, len(matches))
@@ -143,6 +155,12 @@ func purgeOldFiles(file string, keepAtMost int) {
 		log.Printf("Remove old file %v as there are more than %d version(s) of this package", canidate.FullPath, keepAtMost)
 		if err := os.Remove(canidate.FullPath); err != nil {
 			log.Print(err)
+		}
+		// remove a matching '.sig' file (if it exists)
+		if err := os.Remove(canidate.FullPath + ".sig"); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				log.Print(err)
+			}
 		}
 	}
 }
@@ -170,4 +188,14 @@ func parsePackage(file string) Package {
 		Arch:      last[0],
 		Extension: last[1],
 	}
+}
+
+func filterOutSigs(files []string) []string {
+	filtered := files[0:]
+	for _, file := range files {
+		if strings.HasSuffix(file, ".sig") {
+			filtered = append(filtered, file)
+		}
+	}
+	return filtered
 }
